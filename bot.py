@@ -23,27 +23,8 @@ STATUS_EMOJIS = {
     "❌": "cancelled"
 }
 
-# Путь к файлу с chat_id
-CHAT_ID_FILE = "chat_id.txt"
-
-# Загружаем chat_id при старте
-try:
-    with open(CHAT_ID_FILE, "r") as f:
-        ALLOWED_CHAT_ID = int(f.read().strip())
-except FileNotFoundError:
-    ALLOWED_CHAT_ID = None
-
 @dp.message(F.text.lower().contains("#задача"))
 async def collect_task(message: Message):
-    global ALLOWED_CHAT_ID
-    if ALLOWED_CHAT_ID is None:
-        ALLOWED_CHAT_ID = message.chat.id
-        with open(CHAT_ID_FILE, "w") as f:
-            f.write(str(ALLOWED_CHAT_ID))
-
-    if message.chat.id != ALLOWED_CHAT_ID:
-        return
-
     text = message.text
     to_user = None
     for word in text.split():
@@ -78,9 +59,6 @@ async def on_reaction(event: types.MessageReactionUpdated):
 
 @dp.message(F.text.lower().startswith("собери"))
 async def collect_report(message: Message):
-    if message.chat.id != ALLOWED_CHAT_ID:
-        return
-
     parts = message.text.split()
     days = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 1
     cutoff = datetime.now() - timedelta(days=days)
@@ -96,16 +74,16 @@ async def collect_report(message: Message):
         line = f"— {task['to'] or '❓'}: {task['text']}"
         if task["status"] == "👍":
             done.append(line)
-        elif task["status"] == "🔄":
+        elif task["status"] == "🤝":
             in_progress.append(line)
         else:
             no_reaction.append(line)
 
     report = f"<b>📦 Задачи за последние {days} дн.:</b>\n"
     if done:
-        report += "\n<b>✅ Выполнено:</b>\n" + "\n".join(done)
+        report += "\n<b>👍 Выполнено:</b>\n" + "\n".join(done)
     if in_progress:
-        report += "\n<b>🔄 В работе:</b>\n" + "\n".join(in_progress)
+        report += "\n<b>🤝 В работе:</b>\n" + "\n".join(in_progress)
     if no_reaction:
         report += "\n<b>📥 Без реакции:</b>\n" + "\n".join(no_reaction)
 
@@ -113,12 +91,9 @@ async def collect_report(message: Message):
 
 @dp.message(F.text.lower().startswith("kpi"))
 async def kpi_report(message: Message):
-    if message.chat.id != ALLOWED_CHAT_ID:
-        return
+    await send_monthly_kpi_report(message.chat.id)
 
-    await send_monthly_kpi_report()
-
-async def send_monthly_kpi_report():
+async def send_monthly_kpi_report(chat_id=None):
     cutoff = datetime.now() - timedelta(days=30)
     user_stats = {}
 
@@ -131,21 +106,21 @@ async def send_monthly_kpi_report():
             user_stats[user] = {"total": 0, "done": 0, "unhandled": 0}
 
         user_stats[user]["total"] += 1
-        if task["status"] == "🤝":
+        if task["status"] == "👍":
             user_stats[user]["done"] += 1
         else:
             user_stats[user]["unhandled"] += 1
 
-    if not user_stats:
+    if not user_stats or chat_id is None:
         return
 
     lines = ["<b>📊 Ежемесячный KPI-отчёт:</b>"]
     for user, stats in user_stats.items():
         lines.append(
-            f"\n{user}:\nВсего: {stats['total']}\n✅ Выполнено: {stats['done']}\n❗ Не выполнено: {stats['unhandled']}"
+            f"\n{user}:\nВсего: {stats['total']}\n👍 Выполнено: {stats['done']}\n❗ Не выполнено: {stats['unhandled']}"
         )
 
-    await bot.send_message(ALLOWED_CHAT_ID, "\n".join(lines))
+    await bot.send_message(chat_id, "\n".join(lines))
 
 async def monthly_kpi_task():
     sent_month = None
@@ -153,7 +128,10 @@ async def monthly_kpi_task():
         now = datetime.now()
         if now.day == 1 and now.month != sent_month:
             sent_month = now.month
-            await send_monthly_kpi_report()
+            # Уведомить во все активные чаты (если потребуется, можно расширить)
+            for task in tasks.values():
+                await send_monthly_kpi_report(task.get("chat_id"))
+            await asyncio.sleep(5)
         await asyncio.sleep(3600)
 
 async def main():
