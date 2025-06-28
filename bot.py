@@ -4,7 +4,6 @@ from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.enums import ParseMode
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
-from aiogram.utils.markdown import hbold
 import os
 from dotenv import load_dotenv
 
@@ -16,12 +15,6 @@ dp = Dispatcher()
 
 # Хранилище задач
 tasks = {}
-
-STATUS_EMOJIS = {
-    "👍": "done",
-    "🤝": "in_progress",
-    "📥": "pending"
-}
 
 def task_buttons(message_id: int):
     return InlineKeyboardMarkup(inline_keyboard=[
@@ -40,18 +33,18 @@ async def collect_task(message: Message):
             to_user = word
             break
 
+    reply_text = "Задача зарегистрирована.\nСтатус: 📥 Ожидает\n(установите статус кнопкой ниже)"
+    reply_msg = await message.reply(reply_text, reply_markup=task_buttons(message.message_id))
+
     tasks[message.message_id] = {
         "text": text,
         "author": message.from_user.mention_html(),
         "to": to_user,
         "timestamp": datetime.now(),
-        "status": "📥"
+        "status": "📥",
+        "reply_msg_id": reply_msg.message_id,
+        "chat_id": reply_msg.chat.id
     }
-
-    reply_text = "Задача зарегистрирована.
-Статус: 📥 Ожидает
-(установите статус кнопкой ниже)"
-    await message.reply(reply_text, reply_markup=task_buttons(message.message_id))
 
 @dp.callback_query(F.data.startswith("done:") | F.data.startswith("in_progress:"))
 async def handle_status_change(callback: CallbackQuery):
@@ -64,11 +57,21 @@ async def handle_status_change(callback: CallbackQuery):
         tasks[message_id]["status"] = emoji
         user = callback.from_user.mention_html()
 
+        reply_id = tasks[message_id].get("reply_msg_id")
+        chat_id = tasks[message_id].get("chat_id")
+
         new_text = f"Задача зарегистрирована.\nСтатус: {emoji} (обновил {user})"
+
         try:
-            await callback.message.edit_text(new_text, reply_markup=task_buttons(message_id))
+            await bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=reply_id,
+                text=new_text,
+                reply_markup=task_buttons(message_id)
+            )
         except Exception as e:
-            logging.warning(f"Не удалось обновить сообщение: {e}")
+            logging.warning(f"Ошибка при редактировании сообщения: {e}")
+
         await callback.answer(f"Статус обновлён: {'Выполнено' if status_key == 'done' else 'В работе'}")
     else:
         await callback.answer("Задача не найдена.", show_alert=True)
@@ -103,7 +106,7 @@ async def collect_report(message: Message):
     if no_reaction:
         report += "\n<b>📥 Без реакции:</b>\n" + "\n".join(no_reaction)
 
-    await message.answer(report)
+    await message.answer(report, parse_mode="HTML")
 
 @dp.message(F.text.lower().startswith("kpi"))
 async def kpi_report(message: Message):
@@ -136,7 +139,7 @@ async def send_monthly_kpi_report(chat_id=None):
             f"\n{user}:\nВсего: {stats['total']}\n👍 Выполнено: {stats['done']}\n❗ Не выполнено: {stats['unhandled']}"
         )
 
-    await bot.send_message(chat_id, "\n".join(lines))
+    await bot.send_message(chat_id, "\n".join(lines), parse_mode="HTML")
 
 async def monthly_kpi_task():
     sent_month = None
