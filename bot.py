@@ -18,8 +18,8 @@ dp = Dispatcher()
 tasks = {}
 
 STATUS_EMOJIS = {
-    "✅": "done",
-    "🔄": "in_progress",
+    "👍": "done",
+    "🤝": "in_progress",
     "❌": "cancelled"
 }
 
