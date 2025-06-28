@@ -94,7 +94,7 @@ async def collect_report(message: Message):
             continue
 
         line = f"— {task['to'] or '❓'}: {task['text']}"
-        if task["status"] == "✅":
+        if task["status"] == "👍":
             done.append(line)
         elif task["status"] == "🔄":
             in_progress.append(line)
@@ -131,7 +131,7 @@ async def send_monthly_kpi_report():
             user_stats[user] = {"total": 0, "done": 0, "unhandled": 0}
 
         user_stats[user]["total"] += 1
-        if task["status"] == "✅":
+        if task["status"] == "🤝":
             user_stats[user]["done"] += 1
         else:
             user_stats[user]["unhandled"] += 1
