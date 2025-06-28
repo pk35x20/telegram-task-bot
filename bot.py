@@ -3,7 +3,7 @@ import logging
 from datetime import datetime, timedelta
 from aiogram import Bot, Dispatcher, F, types
 from aiogram.enums import ParseMode
-from aiogram.types import Message, ReactionTypeEmoji
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton, CallbackQuery
 from aiogram.utils.markdown import hbold
 import os
 from dotenv import load_dotenv
@@ -20,8 +20,16 @@ tasks = {}
 STATUS_EMOJIS = {
     "👍": "done",
     "🤝": "in_progress",
-    "❌": "cancelled"
+    "📥": "pending"
 }
+
+def task_buttons(message_id: int):
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [
+            InlineKeyboardButton(text="👍 Выполнено", callback_data=f"done:{message_id}"),
+            InlineKeyboardButton(text="🤝 В работе", callback_data=f"in_progress:{message_id}")
+        ]
+    ])
 
 @dp.message(F.text.lower().contains("#задача"))
 async def collect_task(message: Message):
@@ -40,22 +48,30 @@ async def collect_task(message: Message):
         "status": "📥"
     }
 
-@dp.message_reaction()
-async def on_reaction(event: types.MessageReactionUpdated):
-    message_id = event.message_id
-    if message_id not in tasks:
-        return
+    reply_text = "Задача зарегистрирована.
+Статус: 📥 Ожидает
+(установите статус кнопкой ниже)"
+    await message.reply(reply_text, reply_markup=task_buttons(message.message_id))
 
-    status = "📥"
-    if event.new_reaction:
-        for r in event.new_reaction:
-            if isinstance(r.type, ReactionTypeEmoji):
-                emoji = r.type.emoji
-                if emoji in STATUS_EMOJIS:
-                    status = emoji
-                    break
+@dp.callback_query(F.data.startswith("done:") | F.data.startswith("in_progress:"))
+async def handle_status_change(callback: CallbackQuery):
+    data = callback.data
+    status_key, message_id_str = data.split(":")
+    message_id = int(message_id_str)
 
-    tasks[message_id]["status"] = status
+    if message_id in tasks:
+        emoji = "👍" if status_key == "done" else "🤝"
+        tasks[message_id]["status"] = emoji
+        user = callback.from_user.mention_html()
+
+        new_text = f"Задача зарегистрирована.\nСтатус: {emoji} (обновил {user})"
+        try:
+            await callback.message.edit_text(new_text, reply_markup=task_buttons(message_id))
+        except Exception as e:
+            logging.warning(f"Не удалось обновить сообщение: {e}")
+        await callback.answer(f"Статус обновлён: {'Выполнено' if status_key == 'done' else 'В работе'}")
+    else:
+        await callback.answer("Задача не найдена.", show_alert=True)
 
 @dp.message(F.text.lower().startswith("собери"))
 async def collect_report(message: Message):
@@ -128,7 +144,6 @@ async def monthly_kpi_task():
         now = datetime.now()
         if now.day == 1 and now.month != sent_month:
             sent_month = now.month
-            # Уведомить во все активные чаты (если потребуется, можно расширить)
             for task in tasks.values():
                 await send_monthly_kpi_report(task.get("chat_id"))
             await asyncio.sleep(5)
