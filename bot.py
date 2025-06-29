@@ -29,10 +29,12 @@ def task_buttons(message_id: int):
 async def collect_task(message: Message):
     chat_id = message.chat.id
     text = message.text
+
+    # Поиск получателя задачи
     to_user = None
     for word in text.split():
         if word.startswith("@"):
-            to_user = word
+            to_user = word.strip(",.():;!?")
             break
 
     reply_text = "Задача зарегистрирована.\nСтатус: 📥 Ожидает\n(установите статус кнопкой ниже)"
@@ -114,7 +116,8 @@ async def collect_report(message: Message):
 
 @dp.message(F.text.lower().startswith("kpi"))
 async def kpi_report(message: Message):
-    await send_monthly_kpi_report(message.chat.id)
+    chat_id = message.chat.id
+    await send_monthly_kpi_report(chat_id)
 
 async def send_monthly_kpi_report(chat_id: int):
     cutoff = datetime.now() - timedelta(days=30)
@@ -122,7 +125,7 @@ async def send_monthly_kpi_report(chat_id: int):
     user_stats = {}
 
     for task in chat_tasks.values():
-        if task["timestamp"] < cutoff or not task["to"]:
+        if task["timestamp"] < cutoff or not task.get("to"):
             continue
 
         user = task["to"]
@@ -136,16 +139,16 @@ async def send_monthly_kpi_report(chat_id: int):
             user_stats[user]["unhandled"] += 1
 
     if not user_stats:
-        await bot.send_message(chat_id, "Нет задач за последние 30 дней.")
+        await bot.send_message(chat_id, "Нет задач с адресацией @username за последние 30 дней.")
         return
 
     lines = ["<b>📊 KPI за 30 дней:</b>"]
     for user, stats in user_stats.items():
         lines.append(
-            f"\n{user}:\nВсего: {stats['total']}\n👍 Выполнено: {stats['done']}\n❗ Не выполнено: {stats['unhandled']}"
+            f"\n{user}:\nВсего задач: {stats['total']}\n👍 Выполнено: {stats['done']}\n❗ Не выполнено: {stats['unhandled']}"
         )
 
-    await bot.send_message(chat_id, "\n".join(lines))
+    await bot.send_message(chat_id, "\n".join(lines), parse_mode=ParseMode.HTML)
 
 async def monthly_kpi_task():
     sent_months = {}
