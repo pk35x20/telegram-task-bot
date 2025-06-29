@@ -8,19 +8,19 @@ import os
 from dotenv import load_dotenv
 
 load_dotenv()
-
 BOT_TOKEN = os.getenv("BOT_TOKEN")
+
 bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
 dp = Dispatcher()
 
-# Хранилище задач по чатам
+# Отдельное хранилище задач по каждому чату
 tasks_by_chat = {}
 
 def task_buttons(msg_id: int):
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton("👍 Выполнено", callback_data=f"done:{msg_id}"),
-            InlineKeyboardButton("🤝 В работе", callback_data=f"in_progress:{msg_id}")
+            InlineKeyboardButton("👍 Выполнено", callback_data=f"done:{msg_id}"),
+            InlineKeyboardButton("🤝 В работе", callback_data=f"in_progress:{msg_id}")
         ]
     ])
 
@@ -30,19 +30,18 @@ async def collect_task(message: Message):
     text = message.text.strip()
     words = text.split()
 
-    # 1) Пробуем найти entity-mention
     to_user = None
     if message.entities:
         for ent in message.entities:
             if ent.type == "mention":
                 to_user = text[ent.offset:ent.offset + ent.length]
                 break
-
-    # 2) Фоллбэк: слово после #задача
     if not to_user and len(words) >= 2 and words[0].lower() == "#задача":
         to_user = words[1].strip(",.():;!?")
 
-    reply = "Задача зарегистрирована.\nСтатус: 📥 Ожидает\n(нажмите кнопку ниже)"
+    reply = "Задача зарегистрирована.
+Статус: 📥 Ожидает
+(нажмите кнопку ниже)"
     reply_msg = await message.reply(reply, reply_markup=task_buttons(message.message_id))
 
     tasks_by_chat.setdefault(chat_id, {})[message.message_id] = {
@@ -67,7 +66,8 @@ async def handle_status_change(cb: CallbackQuery):
         user = cb.from_user.mention_html()
         reply_id = chat_tasks[msg_id]["reply_msg_id"]
 
-        new_text = f"Задача зарегистрирована.\nСтатус: {emoji} (обновил {user})"
+        new_text = f"Задача зарегистрирована.
+Статус: {emoji} (обновил {user})"
         try:
             await bot.edit_message_text(
                 new_text, chat_id, reply_id, reply_markup=task_buttons(msg_id)
@@ -98,13 +98,23 @@ async def collect_report(message: Message):
         else:
             pend.append(line)
 
-    report = f"<b>📦 Задачи за {days} дн.:</b>\n"
+    report = f"<b>📦 Задачи за {days} дн.:</b>
+"
     if done:
-        report += "\n<b>👍 Выполнено:</b>\n" + "\n".join(done)
+        report += "
+<b>👍 Выполнено:</b>
+" + "
+".join(done)
     if prog:
-        report += "\n<b>🤝 В работе:</b>\n" + "\n".join(prog)
+        report += "
+<b>🤝 В работе:</b>
+" + "
+".join(prog)
     if pend:
-        report += "\n<b>📥 Без реакции:</b>\n" + "\n".join(pend)
+        report += "
+<b>📥 Без реакции:</b>
+" + "
+".join(pend)
 
     await message.answer(report, parse_mode=ParseMode.HTML)
 
@@ -133,24 +143,17 @@ async def send_monthly_kpi_report(chat_id: int):
     lines = ["<b>📊 KPI за 30 дней:</b>"]
     for user, s in stats.items():
         lines.append(
-            f"\n{user}:\nВсего задач: {s['total']}\n👍 Выполнено: {s['done']}\n❗ Не выполнено: {s['unhandled']}"
+            f"
+{user}:
+Всего задач: {s['total']}
+👍 Выполнено: {s['done']}
+❗ Не выполнено: {s['unhandled']}"
         )
-    await bot.send_message(chat_id, "\n".join(lines), parse_mode=ParseMode.HTML)
-
-async def monthly_kpi_task():
-    sent = {}
-    while True:
-        now = datetime.now()
-        if now.day == 1:
-            for cid in tasks_by_chat:
-                if sent.get(cid) != now.month:
-                    await send_monthly_kpi_report(cid)
-                    sent[cid] = now.month
-        await asyncio.sleep(3600)
+    await bot.send_message(chat_id, "
+".join(lines), parse_mode=ParseMode.HTML)
 
 async def main():
     logging.basicConfig(level=logging.INFO)
-    asyncio.create_task(monthly_kpi_task())
     await dp.start_polling(bot)
 
 if __name__ == "__main__":
