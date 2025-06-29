@@ -1,4 +1,3 @@
-
 import asyncio
 import logging
 from datetime import datetime, timedelta
@@ -17,20 +16,21 @@ dp = Dispatcher()
 # Хранилище задач по чатам
 tasks_by_chat = {}
 
-def task_buttons(message_id: int):
+def task_buttons(msg_id: int):
     return InlineKeyboardMarkup(inline_keyboard=[
         [
-            InlineKeyboardButton(text="👍 Выполнено", callback_data=f"done:{message_id}"),
-            InlineKeyboardButton(text="🤝 В работе", callback_data=f"in_progress:{message_id}")
+            InlineKeyboardButton("👍 Выполнено", callback_data=f"done:{msg_id}"),
+            InlineKeyboardButton("🤝 В работе", callback_data=f"in_progress:{msg_id}")
         ]
     ])
 
 @dp.message(F.text.lower().contains("#задача"))
 async def collect_task(message: Message):
     chat_id = message.chat.id
-    text = message.text
+    text = message.text.strip()
+    words = text.split()
 
-    # Корректный парсинг первого @username (через entities)
+    # 1) Пробуем найти entity-mention
     to_user = None
     if message.entities:
         for ent in message.entities:
@@ -38,50 +38,46 @@ async def collect_task(message: Message):
                 to_user = text[ent.offset:ent.offset + ent.length]
                 break
 
-    reply_text = "Задача зарегистрирована.\nСтатус: 📥 Ожидает\n(установите статус кнопкой ниже)"
-    reply_msg = await message.reply(reply_text, reply_markup=task_buttons(message.message_id))
+    # 2) Фоллбэк: слово после #задача
+    if not to_user and len(words) >= 2 and words[0].lower() == "#задача":
+        to_user = words[1].strip(",.():;!?")
 
-    if chat_id not in tasks_by_chat:
-        tasks_by_chat[chat_id] = {}
+    reply = "Задача зарегистрирована.\nСтатус: 📥 Ожидает\n(нажмите кнопку ниже)"
+    reply_msg = await message.reply(reply, reply_markup=task_buttons(message.message_id))
 
-    tasks_by_chat[chat_id][message.message_id] = {
+    tasks_by_chat.setdefault(chat_id, {})[message.message_id] = {
         "text": text,
         "author": message.from_user.mention_html(),
         "to": to_user,
         "timestamp": datetime.now(),
         "status": "📥",
         "reply_msg_id": reply_msg.message_id,
-        "chat_id": chat_id
     }
 
 @dp.callback_query(F.data.startswith("done:") | F.data.startswith("in_progress:"))
-async def handle_status_change(callback: CallbackQuery):
-    data = callback.data
-    status_key, message_id_str = data.split(":")
-    message_id = int(message_id_str)
-    chat_id = callback.message.chat.id
-
+async def handle_status_change(cb: CallbackQuery):
+    action, msg_id_str = cb.data.split(":")
+    msg_id = int(msg_id_str)
+    chat_id = cb.message.chat.id
     chat_tasks = tasks_by_chat.get(chat_id, {})
-    if message_id in chat_tasks:
-        emoji = "👍" if status_key == "done" else "🤝"
-        chat_tasks[message_id]["status"] = emoji
-        user = callback.from_user.mention_html()
-        reply_id = chat_tasks[message_id]["reply_msg_id"]
+
+    if msg_id in chat_tasks:
+        emoji = "👍" if action == "done" else "🤝"
+        chat_tasks[msg_id]["status"] = emoji
+        user = cb.from_user.mention_html()
+        reply_id = chat_tasks[msg_id]["reply_msg_id"]
 
         new_text = f"Задача зарегистрирована.\nСтатус: {emoji} (обновил {user})"
         try:
             await bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=reply_id,
-                text=new_text,
-                reply_markup=task_buttons(message_id)
+                new_text, chat_id, reply_id, reply_markup=task_buttons(msg_id)
             )
         except Exception as e:
-            logging.warning(f"Ошибка при редактировании: {e}")
+            logging.warning(f"Не удалось обновить: {e}")
 
-        await callback.answer(f"Статус: {'Выполнено' if emoji == '👍' else 'В работе'}")
+        await cb.answer(f"Статус: {'Выполнено' if action=='done' else 'В работе'}")
     else:
-        await callback.answer("Задача не найдена.", show_alert=True)
+        await cb.answer("Задача не найдена", show_alert=True)
 
 @dp.message(F.text.lower().startswith("собери"))
 async def collect_report(message: Message):
@@ -90,76 +86,66 @@ async def collect_report(message: Message):
     days = int(parts[1]) if len(parts) > 1 and parts[1].isdigit() else 1
     cutoff = datetime.now() - timedelta(days=days)
 
-    done, in_progress, no_reaction = [], [], []
-
-    chat_tasks = tasks_by_chat.get(chat_id, {})
-    for task in chat_tasks.values():
+    done, prog, pend = [], [], []
+    for task in tasks_by_chat.get(chat_id, {}).values():
         if task["timestamp"] < cutoff:
             continue
-
         line = f"— {task['to'] or '❓'}: {task['text']}"
         if task["status"] == "👍":
             done.append(line)
         elif task["status"] == "🤝":
-            in_progress.append(line)
+            prog.append(line)
         else:
-            no_reaction.append(line)
+            pend.append(line)
 
     report = f"<b>📦 Задачи за {days} дн.:</b>\n"
     if done:
-        report += "\n<b>👍 Выполнено:</b>\n" + "\n".join(done)
-    if in_progress:
-        report += "\n<b>🤝 В работе:</b>\n" + "\n".join(in_progress)
-    if no_reaction:
-        report += "\n<b>📥 Без реакции:</b>\n" + "\n".join(no_reaction)
+        report += "\n<b>👍 Выполнено:</b>\n" + "\n".join(done)
+    if prog:
+        report += "\n<b>🤝 В работе:</b>\n" + "\n".join(prog)
+    if pend:
+        report += "\n<b>📥 Без реакции:</b>\n" + "\n".join(pend)
 
     await message.answer(report, parse_mode=ParseMode.HTML)
 
 @dp.message(F.text.lower().startswith("kpi"))
 async def kpi_report(message: Message):
-    chat_id = message.chat.id
-    await send_monthly_kpi_report(chat_id)
+    await send_monthly_kpi_report(message.chat.id)
 
 async def send_monthly_kpi_report(chat_id: int):
     cutoff = datetime.now() - timedelta(days=30)
-    chat_tasks = tasks_by_chat.get(chat_id, {})
-    user_stats = {}
-
-    for task in chat_tasks.values():
-        if task["timestamp"] < cutoff or not task.get("to"):
+    stats = {}
+    for task in tasks_by_chat.get(chat_id, {}).values():
+        if task["timestamp"] < cutoff or not task["to"]:
             continue
-
         user = task["to"]
-        if user not in user_stats:
-            user_stats[user] = {"total": 0, "done": 0, "unhandled": 0}
-
-        user_stats[user]["total"] += 1
+        stats.setdefault(user, {"total": 0, "done": 0, "unhandled": 0})
+        stats[user]["total"] += 1
         if task["status"] == "👍":
-            user_stats[user]["done"] += 1
+            stats[user]["done"] += 1
         else:
-            user_stats[user]["unhandled"] += 1
+            stats[user]["unhandled"] += 1
 
-    if not user_stats:
-        await bot.send_message(chat_id, "Нет задач с адресацией @username за последние 30 дней.")
+    if not stats:
+        await bot.send_message(chat_id, "Нет задач с адресацией за последние 30 дней.")
         return
 
     lines = ["<b>📊 KPI за 30 дней:</b>"]
-    for user, stats in user_stats.items():
+    for user, s in stats.items():
         lines.append(
-            f"\n{user}:\nВсего задач: {stats['total']}\n👍 Выполнено: {stats['done']}\n❗ Не выполнено: {stats['unhandled']}"
+            f"\n{user}:\nВсего задач: {s['total']}\n👍 Выполнено: {s['done']}\n❗ Не выполнено: {s['unhandled']}"
         )
-
     await bot.send_message(chat_id, "\n".join(lines), parse_mode=ParseMode.HTML)
 
 async def monthly_kpi_task():
-    sent_months = {}
+    sent = {}
     while True:
         now = datetime.now()
         if now.day == 1:
-            for chat_id in tasks_by_chat:
-                if sent_months.get(chat_id) != now.month:
-                    await send_monthly_kpi_report(chat_id)
-                    sent_months[chat_id] = now.month
+            for cid in tasks_by_chat:
+                if sent.get(cid) != now.month:
+                    await send_monthly_kpi_report(cid)
+                    sent[cid] = now.month
         await asyncio.sleep(3600)
 
 async def main():
