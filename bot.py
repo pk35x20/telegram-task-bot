@@ -30,12 +30,13 @@ async def collect_task(message: Message):
     chat_id = message.chat.id
     text = message.text
 
-    # Поиск получателя задачи
+    # Корректный парсинг первого @username (через entities)
     to_user = None
-    for word in text.split():
-        if word.startswith("@"):
-            to_user = word.strip(",.():;!?")
-            break
+    if message.entities:
+        for ent in message.entities:
+            if ent.type == "mention":
+                to_user = text[ent.offset:ent.offset + ent.length]
+                break
 
     reply_text = "Задача зарегистрирована.\nСтатус: 📥 Ожидает\n(установите статус кнопкой ниже)"
     reply_msg = await message.reply(reply_text, reply_markup=task_buttons(message.message_id))
@@ -112,7 +113,7 @@ async def collect_report(message: Message):
     if no_reaction:
         report += "\n<b>📥 Без реакции:</b>\n" + "\n".join(no_reaction)
 
-    await message.answer(report)
+    await message.answer(report, parse_mode=ParseMode.HTML)
 
 @dp.message(F.text.lower().startswith("kpi"))
 async def kpi_report(message: Message):
