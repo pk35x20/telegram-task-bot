@@ -1,53 +1,78 @@
-import logging
+
 import os
-from aiogram import Bot, Dispatcher, types
-from aiogram.enums import ParseMode
-from aiogram.filters import Command, CommandObject
-from aiogram.types import Message
-from aiogram import F
-from aiogram.fsm.storage.memory import MemoryStorage
-from dotenv import load_dotenv
-from datetime import datetime, timedelta
 import asyncio
+from datetime import datetime, timedelta
 
-# Загрузка токена
+from aiogram import Bot, Dispatcher, types, F
+from aiogram.enums import ParseMode
+from aiogram.filters import Command
+from aiogram.types import Message
+from aiogram.utils.markdown import hbold
+from dotenv import load_dotenv
+
 load_dotenv()
-TOKEN = os.getenv("BOT_TOKEN")
+BOT_TOKEN = os.getenv("BOT_TOKEN")
 
-# Настройка логирования
-logging.basicConfig(level=logging.INFO)
+bot = Bot(token=BOT_TOKEN, parse_mode=ParseMode.HTML)
+dp = Dispatcher()
 
-# Инициализация бота и диспетчера
-bot = Bot(token=TOKEN, parse_mode=ParseMode.HTML)
-dp = Dispatcher(storage=MemoryStorage())
+async def send_long_message(chat_id: int, text: str):
+    max_length = 4096
+    for i in range(0, len(text), max_length):
+        await bot.send_message(chat_id, text[i:i + max_length], parse_mode=ParseMode.HTML)
 
-# Хранилище задач
-tasks = []
-
-@dp.message(F.text.lower().contains("#задача"))
-async def collect_task(message: Message):
-    tasks.append((datetime.now(), message.from_user.first_name, message.text))
+def parse_task_status(text):
+    if "👍" in text:
+        return "👍"
+    elif "🤝" in text:
+        return "🤝"
+    else:
+        return "❓"
 
 @dp.message(Command("собери"))
-async def send_tasks(message: Message, command: CommandObject):
-    try:
-        days = int(command.args.strip()) if command.args else None
-    except (ValueError, AttributeError):
-        await message.answer("❗ Укажи число — например: /собери 2")
+async def handle_soberi(message: Message):
+    args = message.text.strip().split()
+    days = int(args[1]) if len(args) > 1 and args[1].isdigit() else 1
+    cutoff_date = datetime.now() - timedelta(days=days)
+
+    collected = {"👍": [], "🤝": [], "❓": []}
+    offset_id = 0
+    limit = 100
+    total_loaded = 0
+
+    for _ in range(10):  # до 1000 сообщений
+        messages = await bot.get_chat_history(message.chat.id, limit=limit, offset_id=offset_id)
+        if not messages:
+            break
+
+        for msg in messages:
+            if msg.date < cutoff_date:
+                continue
+            if msg.text and "#задача" in msg.text.lower():
+                status = parse_task_status(msg.text)
+                collected[status].append(msg.text)
+
+        offset_id = messages[-1].message_id
+        total_loaded += len(messages)
+
+    if not any(collected.values()):
+        await message.answer("Не найдено задач за указанный период.")
         return
 
-    now = datetime.now()
-    filtered = [
-        f"{author}: {text}"
-        for created_at, author, text in tasks
-        if days is None or (now - created_at <= timedelta(days=days))
-    ]
+    report = f"📦 Задачи за {days} дн. (просканировано {total_loaded} сообщений):\n"
+    for status, tasks in collected.items():
+        report += f"\n{status} {status_name(status)}:\n"
+        for task in tasks:
+            report += f"— {task}\n"
 
-    if not filtered:
-        await message.answer("📭 Нет задач за указанный период.")
-    else:
-        response = "📋 Список задач:\n" + "\n".join(filtered)
-        await message.answer(response)
+    await send_long_message(message.chat.id, report)
+
+def status_name(emoji):
+    return {
+        "👍": "Выполнено",
+        "🤝": "В работе",
+        "❓": "Без статуса"
+    }.get(emoji, "Неизвестно")
 
 async def main():
     await dp.start_polling(bot)
